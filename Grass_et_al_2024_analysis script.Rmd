@@ -1,0 +1,3058 @@
+---
+title: "Analysis Update"
+author: "Bonaguro Lorenzo"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
+---
+
+# Loading libraries
+
+```{r}
+library(Seurat)
+library(SeuratDisk)
+library(ggplot2)
+library(SingleR)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(RColorBrewer)
+library(ggpubr)
+library(reshape2)
+library(fgsea)
+library(tidyverse)
+library(xlsx)
+```
+
+# Setting up the parallelization
+```{r}
+# library(devtools)
+# remove.packages("future")
+# remove.packages("future.apply")
+# install_version("future", version = "1.12.0", repos = "http://cran.us.r-project.org", upgrade = "never")
+# install_version("future.apply", version = "1.2.0", repos = "http://cran.us.r-project.org", upgrade = "never")
+```
+
+```{r, message=FALSE}
+library(future)
+plan("multiprocess", workers = 8)
+options(future.globals.maxSize = 16000 * 1024^2)
+```
+
+# Costom functions
+
+```{r}
+confusionMatrix <- function (i = NULL, j = NULL) 
+{
+  ui <- unique(i)
+  uj <- unique(j)
+  m <- Matrix::sparseMatrix(i = match(i, ui), j = match(j, 
+    uj), x = rep(1, length(i)), dims = c(length(ui), length(uj)))
+  rownames(m) <- ui
+  colnames(m) <- uj
+  m
+}
+
+cluster_palette <- c("#89C5DA", "#DA5724", "#74D944", "#CE50CA", "#3F4921", "#C0717C", "#CBD588", "#5F7FC7",
+                     "#673770", "#D3D93E", "#38333E", "#508578", "#D7C1B1", "#689030", "#AD6F3B", "#CD9BCD",
+                     "#D14285", "#6DDE88", "#652926", "#7FDCC0", "#C84248", "#8569D5", "#5E738F", "#D1A33D",
+                     "#8A7C64", "#599861", "#89C5DA", "#DA5724", "#74D944", "#CE50CA", "#3F4921", "#C0717C", "#CBD588", "#5F7FC7",
+                     "#673770", "#D3D93E", "#38333E", "#508578", "#D7C1B1", "#689030", "#AD6F3B", "#CD9BCD",
+                     "#D14285", "#6DDE88", "#652926", "#7FDCC0", "#C84248", "#8569D5", "#5E738F", "#D1A33D",
+                     "#8A7C64", "#599861")
+```
+
+# Load signatures
+```{r}
+all_gs <- gmtPathways("/data/rodriguez_muela_10x/analysis/GMTfiles/msigdb.v2023.1.Hs.symbols.gmt")
+```
+
+## Natalia's singatures
+```{r}
+hox_genes <- c("HOXA1","HOXA10","HOXA10-AS","HOXA11","HOXA11-AS","HOXA13","HOXA2","HOXA3",
+               "HOXA4","HOXA5","HOXA6","HOXA7","HOXA9","HOXA-AS2","HOXA-AS3","HOXB1","HOXB13",
+               'HOXB2',"HOXB3","HOXB4","HOXB5","HOXB6","HOXB7","HOXB8","HOXB9","HOXB-AS1",
+               "HOXB-AS2","HOXB-AS3","HOXB-AS4","HOXC10","HOXC11","HOXC13","HOXC4","HOXC5",
+               "HOXC6","HOXC8","HOXC9","HOXC-AS1","HOXC-AS2","HOXC-AS3","HOXD1","HOXD10",
+               "HOXD11","HOXD13","HOXD3","HOXD4","HOXD8","HOXD9","HOXD-AS2")
+
+general_MN_markers <- c("ISL1","ISL2","CHAT","LHX1","LHX3","FOXP1","MNX1","ALCAM","SCLP","PHOX2A",
+                        "PHOX2B","ETV1","TCF8","PSMAD","NOS","ELAVL3","ELAVL4","STMN2","HES6",
+                        "SLC7A10","RUNX1","POU3F1","SERPIN1","ZFHX4","GRID2","FRZB","FZD3")
+
+glia <- c("GFAP","DKK1","EFNB3","SCG2","GATA3","VSX2","EN1","EVX1")
+
+intermediate_progenitors <- c("EOMES","ASCL1")
+
+immature_neurons <- c("DCX", "NEUROD1", "TBR1", "STMN1", "TUBB3")
+  
+neural_progenitors <- c("PAX6","NKX2-2","OLIG2","NEUROG3","NEUROG2","NKX6-1","NKX6-2","DBX2","DBX1",
+                        "PAX7","FOXA2","LMX1A","NES","POU4F1","LHX9","PAX2","HES5","HOPX","ACVR1",
+                        "FABP7","HES6","GFAP","SOX1","SOX2","VIM","NCAM1","ID2","INHBA",
+                        "MSI1","DCX","SLC1A3","EOMES","FABP7","ROR2","S100B")
+
+neural_stem <- c("ABCG2","ASCL1",'CTNNB1',"BMI1","SMARCA4","CDH2","CALCR","FUT4","PROM1","CDCP1","NR2F1",
+           "CXCR4","FABP7","PMP2","FGFR2","FGFR4","FOXD3","FZD9","CDH2",
+           "GATA2","NR6A1","GFAP","SLC2A1","HOXB1","ID2","LRTM1","METRN","MSX1","MSI1","MSI2",
+           "NES","NEUROD1","NOG","NOTCH1","NOTCH2","NFE2L2","GNL3",
+           "NUMB","OTX2","PAX3","PAX6","PDGFRA","PRKCZ","PROM2","ROR2","RUNX1",
+           "RXRA","SFRP2","SLAIN1","SOX1","SOX2","SOX9","SOX11","SOX21","FUT4","SSEA4","TRAF4","VIM","ZIC1")
+
+
+neuromesodermal_progenitors <- c("TBXT","GBX2","GDPD5","ZNF503","NT5E","FGF8","WNT3A","GDF11","NKX1-2","CDX2")
+
+neural_crest <- c("TWIST1","COL5A1","SERPINF1","PDGFRA","PDGFRB","SOX10")
+
+proliferative_cell_markers <- c("PCNA","TP53","statin","TOP2A","LUM","RRM2","CCNE","PLK1","CCND1","CCNB1","MCM2","FOXM1","MKI67","E2F1")
+
+natalia_sign <- list("hox_genes" = hox_genes, 
+                     "general_MN_markers" = general_MN_markers, 
+                     "glia" = glia, 
+                     "intermediate_progenitors" = intermediate_progenitors, 
+                     "immature_neurons" = immature_neurons, 
+                     "neural_progenitors" = neural_progenitors, 
+                     "neural_stem" = neural_stem, 
+                     "neuromesodermal_progenitors" = neuromesodermal_progenitors, 
+                     "neural_crest" = neural_crest, 
+                     "proliferative_cell_markers" = proliferative_cell_markers)
+```
+
+## Selection from MsigDB
+```{r}
+hallmarks <- all_gs[grepl(pattern = "HISTON", names(all_gs))]
+chromatin <- all_gs[grepl(pattern = "CHROMATIN", names(all_gs))]
+```
+
+## FInal Collection of singatures
+```{r}
+sign_collection <- c(natalia_sign, hallmarks, chromatin)
+```
+
+## Other selected genes
+```{r}
+manual_selection <- c("ISL1","MAP2","CHAT","NKX6-1","NKX6-2","NKX2-2","OLIG2","NES","MNX1","PAX6","SOX2","TBXT","FGF8","CDX1","CDX2")
+```
+
+
+# Load the data
+
+## Prepare a directoy list
+
+```{r}
+# directories <- dir(path = "/data/rodriguez_muela_10x/alignment/2023-03-01_tu-dresden/")
+# 
+# directories <- directories[!directories %in% c("all", "unzip_script.sh", "cell_ranger_files.txt", "zip_files")]
+# 
+# directories_load <- paste("/data/rodriguez_muela_10x/alignment/2023-03-01_tu-dresden/", 
+#                      directories, 
+#                      "/count/sample_filtered_feature_bc_matrix/", sep = "")
+# 
+# names(directories_load) <- directories
+# 
+# rm(directories)
+```
+
+## Load the data
+
+```{r}
+# data <- Read10X(data.dir = directories_load, 
+#                 gene.column = 2, 
+#                 cell.column = 1, 
+#                 unique.features = TRUE, 
+#                 strip.suffix = FALSE)
+```
+
+## Seurat object
+
+```{r}
+# seurat = CreateSeuratObject(counts = data$`Gene Expression`, project = "r0driguez_10x")
+# 
+# seurat[['HTO']] = CreateAssayObject(counts = data$`Multiplexing Capture`)
+# 
+# seurat
+```
+
+# All timepoint analysis
+
+## Fixing Metadata table and adding more variables
+
+```{r}
+# # Read in the sample annotation
+# annotation <- read.csv("./annotation_lb_v4.csv", stringsAsFactors = FALSE)
+# 
+# # Make a tmp file for the Seurat metadata
+# tmp <- seurat@meta.data
+# 
+# # Give a better naming to the orig.ident
+# tmp$orig.ident <- substr(rownames(tmp), start = 1, nchar(rownames(tmp))-19)
+# 
+# # Preserve the cell ID before merging
+# tmp$cell_id <- rownames(tmp)
+# 
+# # merge with the Annotation
+# tmp <- merge(x = tmp, y = annotation, by.x = "orig.ident", by.y = "sample_name", sort = FALSE)
+# 
+# # Restore the Row names
+# rownames(tmp) <- tmp$cell_id
+# 
+# tmp$cell_id <- NULL
+# 
+# # Make the check if everything is in the right order
+# identical(rownames(tmp), colnames(seurat@assays$RNA)) # Really good
+# 
+# # Exchange the Seurat Metadata
+# seurat@meta.data <- tmp
+# 
+# rm(tmp)
+```
+
+## QC
+
+```{r}
+# seurat[["percent.mt"]] <- PercentageFeatureSet(seurat, pattern = "^MT-")
+```
+
+```{r}
+# Idents(seurat) <- "orig.ident"
+```
+
+### N. Features
+
+```{r, fig.height=6, fig.width=25}
+# VlnPlot(seurat,
+#         features = c("nFeature_RNA"),
+#         pt.size = 0) + geom_hline(yintercept = 1000, linetype = "dashed")
+```
+
+### N. Counts
+
+```{r, fig.height=6, fig.width=25}
+# VlnPlot(seurat,
+#         features = c("nCount_RNA"),
+#         pt.size = 0)
+```
+
+### N. Mito
+
+```{r, fig.height=6, fig.width=25}
+# VlnPlot(seurat, 
+#         features = c("percent.mt"), 
+#         pt.size = 0) + geom_hline(yintercept = 10)
+```
+
+```{r, fig.width=12}
+# plot1 <- FeatureScatter(seurat, feature1 = "nCount_RNA", feature2 = "percent.mt")
+# plot2 <- FeatureScatter(seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+# plot1 + plot2
+# 
+# rm(plot1, plot2)
+```
+
+### Filter cells
+
+```{r}
+# seurat <- subset(seurat, subset = nFeature_RNA > 1000 & percent.mt < 10)
+# 
+# seurat
+```
+
+## Load Saved Seurat Object
+
+```{r}
+seurat <- LoadH5Seurat("./seurat_objects/230304_seurat_grass_2023.h5Seurat")
+```
+
+## Data Normalization
+
+```{r}
+# seurat <- NormalizeData(seurat, 
+#                         normalization.method = "LogNormalize", 
+#                         scale.factor = 10000)
+```
+
+## Variable Features
+
+```{r}
+# seurat <- FindVariableFeatures(seurat, 
+#                                selection.method = "vst", 
+#                                nfeatures = 2000)
+```
+
+```{r}
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat), 10)
+```
+
+```{r, fig.width=15, fig.height=6}
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+rm(plot1, plot2)
+```
+
+## Data Scaling - Regression of unwanted variance
+
+```{r}
+# all.genes <- rownames(seurat)
+# 
+# seurat <- ScaleData(seurat, features = all.genes)
+```
+
+## PCA
+
+```{r}
+# seurat <- RunPCA(seurat, 
+#                  features = VariableFeatures(object = seurat))
+```
+
+```{r}
+print(seurat[["pca"]], 
+      dims = 1:5, 
+      nfeatures = 5)
+```
+
+```{r, fig.height=6}
+VizDimLoadings(seurat, 
+               dims = 1:2, 
+               reduction = "pca")
+```
+
+```{r, fig.width=6, fig.height=6}
+DimPlot(seurat, 
+        reduction = "pca")
+```
+
+```{r}
+DimHeatmap(seurat, 
+           dims = 1, 
+           cells = 500, 
+           balanced = TRUE)
+```
+
+```{r, fig.height=10, fig.width=10}
+DimHeatmap(seurat, 
+           dims = 1:15, 
+           cells = 500, 
+           balanced = TRUE)
+```
+
+## Determine the dimensionality of the dataset
+
+```{r}
+# ElbowPlot(seurat, ndims = 50)
+```
+
+## Cell clustering
+
+```{r}
+# seurat <- FindNeighbors(seurat, dims = 1:20)
+# seurat <- FindClusters(seurat, resolution = 0.1)
+# seurat <- FindClusters(seurat, resolution = 0.3)
+# seurat <- FindClusters(seurat, resolution = 0.5)
+```
+
+## UMAP
+
+```{r}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+# seurat <- RunUMAP(seurat, dims = 1:20)
+```
+
+```{r}
+DimPlot(seurat, reduction = "umap", 
+        group.by = "RNA_snn_res.0.1", 
+        label = TRUE, 
+        cols = cluster_palette, repel = 100) + theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat, reduction = "umap", 
+        group.by = "RNA_snn_res.0.3", 
+        label = TRUE, 
+        cols = cluster_palette, repel = 100) + theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat, reduction = "umap", 
+        group.by = "RNA_snn_res.0.5", 
+        label = TRUE, 
+        cols = cluster_palette, repel = 100) + theme(aspect.ratio = 1)
+```
+
+```{r, fig.width=15, fig.height=6}
+DimPlot(seurat, reduction = "umap", 
+        group.by = "orig.ident")
+```
+
+```{r, fig.width=6, fig.height=6}
+DimPlot(seurat, reduction = "umap", 
+        group.by = "day_differentiation") + theme(aspect.ratio = 1)
+```
+
+```{r, fig.width=6, fig.height=6}
+DimPlot(seurat, 
+        reduction = "umap", 
+        group.by = "day_differentiation_real") + theme(aspect.ratio = 1)
+```
+
+```{r, fig.width=6, fig.height=6}
+DimPlot(seurat, 
+        reduction = "umap", 
+        group.by = "cell_line")
+```
+
+```{r, fig.width=10, fig.height=6}
+DimPlot(seurat, 
+        reduction = "umap", 
+        group.by = "merged", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat, reduction = "umap", 
+        group.by = "merged_simple", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + theme(aspect.ratio = 1)
+```
+
+## Resolution 0.1
+
+### Stacked barplot - cluster frequencies
+
+```{r}
+ggplot(seurat@meta.data, aes(x=RNA_snn_res.0.1, fill=merged)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = rev(cluster_palette)) + 
+  theme_bw()
+```
+
+```{r}
+ggplot(seurat@meta.data, aes(x=RNA_snn_res.0.1, fill=merged_simple)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+### Percentage HeatMap
+
+#### Add one more metacolumsn
+
+```{r}
+seurat$merged_time <- paste(seurat$merged, seurat$day_differentiation)
+
+seurat$merged_simple_time <- paste(seurat$merged_simple, seurat$day_differentiation)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat$RNA_snn_res.0.1),
+                                 paste0(seurat$merged))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat$RNA_snn_res.0.1),
+                                 paste0(seurat$merged_simple))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat$RNA_snn_res.0.1),
+                                 paste0(seurat$merged_time))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat$RNA_snn_res.0.1),
+                                 paste0(seurat$merged_simple_time))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+### Cluster Identity
+
+```{r}
+Idents(seurat) <- "RNA_snn_res.0.1"
+markers.wilcox_res.0.1 <- FindAllMarkers(object = seurat,
+                                         only.pos = TRUE,
+                                         min.pct = 0.2,
+                                         logfc.threshold = 0.2,
+                                         min.diff.pct = 0.1,
+                                         test.use = "wilcox")
+```
+
+#### Dotplot
+
+```{r, fig.width=6, fig.height=15}
+top <- markers.wilcox_res.0.1 %>% group_by(cluster) %>% top_n(n = 10, wt = abs(avg_log2FC))
+
+p <- DotPlot(seurat,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(top$gene))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+
+p
+```
+
+## Save seurat object
+
+```{r}
+# SaveH5Seurat(object = seurat, 
+#              filename = "./seurat_objects/230304_seurat_grass_2023.h5Seurat", 
+#              overwrite = FALSE)
+```
+
+# 4 days analysis
+
+```{r}
+# seurat_d4 <- subset(seurat, subset = day_differentiation == "d4")
+# 
+# seurat_d4
+
+seurat_d4 <- LoadH5Seurat("./seurat_objects/230306_seurat_d4_grass_2023.h5Seurat")
+```
+
+## Variable Features
+
+```{r}
+# seurat_d4 <- FindVariableFeatures(seurat_d4, 
+#                                   selection.method = "vst", 
+#                                   nfeatures = 2000)
+```
+
+## Data Scaling - Regression of unwanted variance
+
+```{r}
+# seurat_d4 <- ScaleData(seurat_d4, 
+#                        features = rownames(seurat_d4))
+```
+
+## PCA
+
+```{r}
+# seurat_d4 <- RunPCA(seurat_d4, 
+#                     features = VariableFeatures(object = seurat_d4))
+```
+
+```{r, fig.width=15, fig.height=6}
+DimPlot(seurat_d4, 
+        reduction = "pca", group.by = "cell_line")
+```
+
+```{r, fig.height=10, fig.width=10}
+DimHeatmap(seurat_d4, 
+           dims = 1:15, 
+           cells = 500, 
+           balanced = TRUE)
+```
+
+## Determine the dimensionality of the dataset
+
+```{r}
+# ElbowPlot(seurat_d4, ndims = 50)
+```
+
+## Cell clustering
+
+```{r}
+# seurat_d4 <- FindNeighbors(seurat_d4, dims = 1:20)
+```
+
+```{r}
+# seurat_d4 <- FindClusters(seurat_d4, resolution = 0.1)
+# seurat_d4 <- FindClusters(seurat_d4, resolution = 0.3)
+# seurat_d4 <- FindClusters(seurat_d4, resolution = 0.5)
+# seurat_d4 <- FindClusters(seurat_d4, resolution = 1)
+# seurat_d4 <- FindClusters(seurat_d4, resolution = 1.5)
+```
+
+## UMAP
+
+```{r}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+# seurat_d4 <- RunUMAP(seurat_d4, dims = 1:20)
+```
+
+### Visualize the UMAP
+
+```{r}
+DimPlot(seurat_d4, 
+        reduction = "umap", 
+        group.by = "RNA_snn_res.0.1", 
+        cols = cluster_palette) + 
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat_d4, reduction = "umap", 
+        group.by = "merged_simple", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + 
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat_d4, reduction = "umap", 
+        group.by = "merged", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + 
+  theme(aspect.ratio = 1)
+```
+
+## Resolution 0.1
+
+### Stacked barplot - cluster frequencies
+
+```{r}
+ggplot(seurat_d4@meta.data, aes(x=RNA_snn_res.0.1, fill=merged)) + 
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+```{r}
+ggplot(seurat_d4@meta.data, aes(x=RNA_snn_res.0.1, fill=merged_simple)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+### Percentage HeatMap
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d4$RNA_snn_res.0.1),
+                                 paste0(seurat_d4$merged))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d4$RNA_snn_res.0.1),
+                                 paste0(seurat_d4$merged_simple))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+### Cluster Identity
+
+```{r}
+Idents(seurat_d4) <- "RNA_snn_res.0.1"
+d4.markers.wilcox_res.0.1 <- FindAllMarkers(object = seurat_d4,
+                                            only.pos = TRUE,
+                                            min.pct = 0.2,
+                                            logfc.threshold = 0.2,
+                                            min.diff.pct = 0.1,
+                                            test.use = "wilcox")
+```
+
+#### Dotplot
+
+```{r, fig.width=6, fig.height=8}
+top <- d4.markers.wilcox_res.0.1 %>% group_by(cluster) %>% top_n(n = 10, wt = abs(avg_log2FC))
+
+p <- DotPlot(seurat_d4,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(top$gene))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+
+p
+```
+
+## Save seurat object
+
+```{r}
+# SaveH5Seurat(object = seurat_d4, 
+#              filename = "./seurat_objects/230306_seurat_d4_grass_2023.h5Seurat", 
+#              overwrite = FALSE)
+```
+
+# 20 days analysis
+
+```{r}
+# seurat_d20 <- subset(seurat, subset = day_differentiation == "d20")
+# 
+# seurat_d20
+
+seurat_d20 <- LoadH5Seurat("./seurat_objects/230306_seurat_d20_grass_2023.h5Seurat")
+```
+
+## Variable Features
+
+```{r}
+# seurat_d20 <- FindVariableFeatures(seurat_d20, 
+#                                   selection.method = "vst", 
+#                                   nfeatures = 2000)
+```
+
+## Data Scaling - Regression of unwanted variance
+
+```{r}
+# seurat_d20 <- ScaleData(seurat_d20, 
+#                        features = rownames(seurat_d20))
+```
+
+## PCA
+
+```{r}
+# seurat_d20 <- RunPCA(seurat_d20, 
+#                     features = VariableFeatures(object = seurat_d20))
+```
+
+```{r, fig.height=10, fig.width=10}
+DimHeatmap(seurat_d20, 
+           dims = 1:15, 
+           cells = 500, 
+           balanced = TRUE)
+```
+
+## Determine the dimensionality of the dataset
+
+```{r}
+# ElbowPlot(seurat_d20, ndims = 50)
+```
+
+## Cell clustering
+
+```{r}
+# seurat_d20 <- FindNeighbors(seurat_d20, dims = 1:20)
+```
+
+```{r}
+# seurat_d20 <- FindClusters(seurat_d20, resolution = 0.1)
+# seurat_d20 <- FindClusters(seurat_d20, resolution = 0.3)
+# seurat_d20 <- FindClusters(seurat_d20, resolution = 0.5)
+# seurat_d20 <- FindClusters(seurat_d20, resolution = 1)
+# seurat_d20 <- FindClusters(seurat_d20, resolution = 1.5)
+```
+
+## UMAP
+
+```{r}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+# seurat_d20 <- RunUMAP(seurat_d20, dims = 1:20)
+```
+
+### Visualize the UMAP
+
+```{r}
+DimPlot(seurat_d20, 
+        reduction = "umap", 
+        group.by = "RNA_snn_res.0.1", 
+        cols = cluster_palette, 
+        label = T) + 
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat_d20, 
+        reduction = "umap", 
+        group.by = "merged_simple", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + 
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat_d20, 
+        reduction = "umap", 
+        group.by = "merged", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + 
+  theme(aspect.ratio = 1)
+```
+
+## Resolution 0.1
+
+### Stacked barplot - cluster frequencies
+
+```{r}
+ggplot(seurat_d20@meta.data, aes(x=RNA_snn_res.0.1, fill=merged)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+```{r}
+ggplot(seurat_d20@meta.data, aes(x=RNA_snn_res.0.1, fill=merged_simple)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+### Percentage Heatmap
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d20$RNA_snn_res.0.1),
+                                 paste0(seurat_d20$merged))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d20$RNA_snn_res.0.1),
+                                 paste0(seurat_d20$merged_simple))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+### Cluster Identity
+
+```{r}
+Idents(seurat_d20) <- "RNA_snn_res.0.1"
+d20.markers.wilcox_res.0.1 <- FindAllMarkers(object = seurat_d20,
+                                            only.pos = TRUE,
+                                            min.pct = 0.2,
+                                            logfc.threshold = 0.2,
+                                            min.diff.pct = 0.1,
+                                            test.use = "wilcox")
+```
+
+#### Dotplot
+
+```{r, fig.width=7, fig.height=15}
+top <- d20.markers.wilcox_res.0.1 %>% group_by(cluster) %>% top_n(n = 10, wt = abs(avg_log2FC))
+
+p <- DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(top$gene))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+
+p
+```
+
+## Save seurat object
+
+```{r}
+# SaveH5Seurat(object = seurat_d20, 
+#              filename = "./seurat_objects/230306_seurat_d20_grass_2023.h5Seurat", 
+#              overwrite = FALSE)
+```
+
+# 38 days analysis
+
+```{r}
+# seurat_d38 <- subset(seurat, subset = day_differentiation == "d38")
+# 
+# seurat_d38
+
+seurat_d38 <- LoadH5Seurat("./seurat_objects/230306_seurat_d38_grass_2023.h5Seurat")
+```
+
+## Variable Features
+
+```{r}
+# seurat_d38 <- FindVariableFeatures(seurat_d38, 
+#                                   selection.method = "vst", 
+#                                   nfeatures = 2000)
+```
+
+## Data Scaling - Regression of unwanted variance
+
+```{r}
+# seurat_d38 <- ScaleData(seurat_d38, 
+#                        features = rownames(seurat_d38))
+```
+
+## PCA
+
+```{r}
+# seurat_d38 <- RunPCA(seurat_d38, 
+#                     features = VariableFeatures(object = seurat_d38))
+```
+
+```{r, fig.height=10, fig.width=10}
+DimHeatmap(seurat_d38, 
+           dims = 1:15, 
+           cells = 500, 
+           balanced = TRUE)
+```
+
+## Determine the dimensionality of the dataset
+
+```{r}
+# ElbowPlot(seurat_d38, ndims = 50)
+```
+
+## Cell clustering
+
+```{r}
+# seurat_d38 <- FindNeighbors(seurat_d38, dims = 1:20)
+```
+
+```{r}
+# seurat_d38 <- FindClusters(seurat_d38, resolution = 0.1)
+# seurat_d38 <- FindClusters(seurat_d38, resolution = 0.3)
+# seurat_d38 <- FindClusters(seurat_d38, resolution = 0.5)
+# seurat_d38 <- FindClusters(seurat_d38, resolution = 1)
+# seurat_d38 <- FindClusters(seurat_d38, resolution = 1.5)
+```
+
+## UMAP
+
+```{r}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+# seurat_d38 <- RunUMAP(seurat_d38, dims = 1:20)
+```
+
+### Visualize the UMAP
+
+```{r}
+DimPlot(seurat_d38, 
+        reduction = "umap", 
+        group.by = "RNA_snn_res.0.1", 
+        cols = cluster_palette, 
+        label = TRUE, repel = 100) + 
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat_d38, 
+        reduction = "umap", 
+        group.by = "merged_simple", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + 
+  theme(aspect.ratio = 1)
+```
+
+```{r}
+DimPlot(seurat_d38, 
+        reduction = "umap", 
+        group.by = "merged", 
+        split.by = "cell_line", 
+        cols = rev(cluster_palette)) + 
+  theme(aspect.ratio = 1)
+```
+
+## Resolution 0.1
+
+### Stacked barplot - cluster frequencies
+
+```{r}
+ggplot(seurat_d38@meta.data, aes(x=RNA_snn_res.0.1, fill=merged)) + 
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+```{r}
+ggplot(seurat_d38@meta.data, aes(x=RNA_snn_res.0.1, fill=merged_simple)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = rev(cluster_palette)) +
+  theme_bw()
+```
+
+### Percentage Heatmap
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d38$RNA_snn_res.0.1),
+                                 paste0(seurat_d38$merged))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d38$RNA_snn_res.0.1),
+                                 paste0(seurat_d38$merged_simple))
+
+cells_cluster <- cells_cluster[order(factor(rownames(cells_cluster),levels=c(0:nrow(cells_cluster)))),]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = TRUE
+)
+```
+
+### Cluster Identity
+
+```{r}
+Idents(seurat_d38) <- "RNA_snn_res.0.1"
+d38.markers.wilcox_res.0.1 <- FindAllMarkers(object = seurat_d38,
+                                            only.pos = TRUE,
+                                            min.pct = 0.2,
+                                            logfc.threshold = 0.2,
+                                            min.diff.pct = 0.1,
+                                            test.use = "wilcox")
+```
+
+#### Dotplot
+
+```{r, fig.width=6, fig.height=13}
+top <- d38.markers.wilcox_res.0.1 %>% group_by(cluster) %>% top_n(n = 10, wt = abs(avg_log2FC))
+
+p <- DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(top$gene))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+
+p
+```
+
+### Cluster Identity
+
+```{r}
+Idents(seurat_d38) <- "RNA_snn_res.0.5"
+d38.markers.wilcox_res.0.5 <- FindAllMarkers(object = seurat_d38,
+                                            only.pos = TRUE,
+                                            min.pct = 0.2,
+                                            logfc.threshold = 0.2,
+                                            min.diff.pct = 0.1,
+                                            test.use = "wilcox")
+```
+
+#### Dotplot
+
+```{r, fig.width=6, fig.height=13}
+top <- d38.markers.wilcox_res.0.1 %>% group_by(cluster) %>% top_n(n = 10, wt = abs(avg_log2FC))
+
+p <- DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(top$gene))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+
+p
+```
+
+## Save seurat object
+
+```{r}
+# SaveH5Seurat(object = seurat_d38, 
+#              filename = "./seurat_objects/230306_seurat_d38_grass_2023.h5Seurat", 
+#              overwrite = FALSE)
+```
+
+```{r}
+# rm(tmp, top, directories_load, top10, all.genes, p, data)
+```
+
+# Signature Enrichment
+
+## Total Dataset
+```{r, message=F, warning=F}
+seurat <- AddModuleScore(object = seurat, 
+                         features = sign_collection, 
+                         name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat@meta.data)[grepl(pattern = "sign_", colnames(seurat@meta.data))] <- names(sign_collection)
+```
+
+```{r}
+Idents(seurat) <- "RNA_snn_res.0.1"
+
+for(i in names(sign_collection)[1:10]){
+  
+  p <- VlnPlot(seurat,
+               features = i,
+               pt.size = 0)
+  
+  print(p)
+  
+}
+```
+
+## Seurat D4
+```{r, message=F, warning=F}
+seurat_d4 <- AddModuleScore(object = seurat_d4, 
+                            features = sign_collection, 
+                            name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d4@meta.data)[grepl(pattern = "sign_", colnames(seurat_d4@meta.data))] <- names(sign_collection)
+```
+
+```{r}
+Idents(seurat_d4) <- "RNA_snn_res.0.1"
+
+for(i in names(sign_collection)[1:10]){
+  
+  p <- VlnPlot(seurat_d4,
+               features = i,
+               pt.size = 0)
+  
+  print(p)
+  
+}
+```
+
+## Seurat D20
+```{r, message=F, warning=F}
+seurat_d20 <- AddModuleScore(object = seurat_d20, 
+                            features = sign_collection, 
+                            name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d20@meta.data)[grepl(pattern = "sign_", colnames(seurat_d20@meta.data))] <- names(sign_collection)
+```
+
+```{r}
+Idents(seurat_d20) <- "RNA_snn_res.0.1"
+
+for(i in names(sign_collection)[1:10]){
+  
+  p <- VlnPlot(seurat_d20,
+               features = i,
+               pt.size = 0)
+  
+  print(p)
+  
+}
+```
+
+## Seurat D38
+```{r, message=F, warning=F}
+seurat_d38 <- AddModuleScore(object = seurat_d38, 
+                            features = sign_collection, 
+                            name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d38@meta.data)[grepl(pattern = "sign_", colnames(seurat_d38@meta.data))] <- names(sign_collection)
+```
+
+```{r}
+Idents(seurat_d38) <- "RNA_snn_res.0.1"
+
+for(i in names(sign_collection)[1:10]){
+  
+  p <- VlnPlot(seurat_d38,
+               features = i,
+               pt.size = 0)
+  
+  print(p)
+  
+}
+```
+
+# Investigate selected genes
+
+Entire dataset dividing by group
+```{r}
+DotPlot(seurat,
+        group.by = "merged_simple_time",
+        features = manual_selection)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+```
+
+```{r}
+DotPlot(seurat_d4,
+        group.by = "RNA_snn_res.0.1",
+        features = manual_selection)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() + ggtitle("Day4 - Cluster Res. 0.1")
+
+ggsave(filename = "./plots/Day4 - Cluster Res. 0.1.pdf", plot = last_plot())
+```
+
+```{r}
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = manual_selection)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() + ggtitle("Day20 - Cluster Res. 0.1")
+```
+
+```{r}
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = manual_selection)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() + ggtitle("Day38 - Cluster Res. 0.1")
+```
+
+# Evaluate signature genes
+
+## Day 4
+```{r}
+cluster_0_genes <- d4.markers.wilcox_res.0.1[d4.markers.wilcox_res.0.1$cluster == 0,]$gene
+
+hox_genes <- cluster_0_genes[grep("HOX", cluster_0_genes)]
+
+d4_0 <- c("CDX2", "CDX4", "TBXT", "FGF8", hox_genes)
+
+DotPlot(seurat_d4,
+        group.by = "RNA_snn_res.0.1",
+        features = d4_0)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day4 - Cluster 0 genes")
+
+rm(cluster_0_genes, hox_genes)
+
+ggsave(filename = "./plots/Day4 - Cluster 0 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d4_1 <- c("NES", "PAX2", "PAX3", "SOX2", "CCND1", "FABP7")
+
+DotPlot(seurat_d4,
+        group.by = "RNA_snn_res.0.1",
+        features = d4_1)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day4 - Cluster 1 genes")
+
+ggsave(filename = "./plots/Day4 - Cluster 1 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d4_2 <- c("VIM", "ROR2", "COL5A1", "SNAI1")
+
+DotPlot(seurat_d4,
+        group.by = "RNA_snn_res.0.1",
+        features = d4_2)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day4 - Cluster 2 genes")
+
+ggsave(filename = "./plots/Day4 - Cluster 2 genes.pdf", plot = last_plot())
+```
+
+```{r}
+DotPlot(seurat_d4,
+        group.by = "RNA_snn_res.0.1",
+        features = c(d4_0, d4_1, d4_2))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day4")
+
+ggsave(filename = "./plots/Day4.pdf", plot = last_plot())
+```
+
+## Day 20
+```{r}
+d20_0 <- c("NKX6-2", "TTYH1", "METRN", "LRP2", "PTPRZ1", "ERBB4", "RFX4", "FABP7", "PLCH1", "CKB", "HES4")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_0)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 0 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 0 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_1 <- c("COL1A1", "COL3A1", "COL1A2", "COL4A1", "FBXL7")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_1)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 1 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 1 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_2 <- c("NRXN1", "KCNIP4", "STMN2", "ELAVL2", "SLC5A7", "DCX", "NEFL", "NEFM", "MAP2", "ELAVL4", "ISL1", "ISL2", "CHAT", "MNX1")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_2)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 2 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 2 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_3 <- c("HES6", "SRRM4", "ONECUT2", "SYT1", "DCC", "STMN2", "ELAVL4", "ST18", "GAP43", "MAP2", "SNCG", "NEFM", "TAGLN3", "PAX2", "LHX1", "NKX6-1", "PHOX2B")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_3)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 3 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 3 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_4 <- c("TOP2A", "UBE2C", "MKI67", "ASPM", "TPX2", "CDK1", "SOX9", "FGFR2", "ZIC1")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_4)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 4 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 4 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_5 <- c("ADAMTSL1", "HHIP", "SYNPO2", "MSC")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_5)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 5 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 5 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_6 <- c("PAX3", "S100B", "SOX10", "FSTL5", "MPZ",  "PLP1", "NCAM2", "PMP22", "CNP", "CADM4")
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_6)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 6 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 6 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_7 <- unique(c("MYOM1", "MYBPC1", "ACTN2", "TNNC2",  "MYBPH", "KLHL41", "MYLPF", "ACTA1", "ACTC1", "DES", "MYL1", "TNNT3", "MYF6", "TNNI2", 
+                     "PIX2", "MSC", "SYTL2", "SGCA", "MYOD1", "MYOG", "CDH15", "CHRNB1", "CHRND", "TTN", "MYBPH", "ACTA1", "ACTN2", "ACTN2"))
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_7)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 7 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 7 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d20_8 <- unique(c("PLVAP", "FLT1", "CD93", "ECSCR", "ICAM2", "RNASE1", "CDH5", "ESM1", "EMCN",  "GJA4", "KDR", "PECAM1", "CD34"))
+
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = d20_8)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Cluster 8 genes")
+
+ggsave(filename = "./plots/Day20 - Cluster 8 genes.pdf", plot = last_plot())
+```
+
+```{r, fig.width=18, fig.height=5}
+DotPlot(seurat_d20,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(c(d20_0, d20_1, d20_2, d20_3, d20_4, d20_5, d20_6, d20_7, d20_8)))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20")
+
+ggsave(filename = "./plots/Day20.pdf", plot = last_plot())
+```
+
+## Day 38
+```{r}
+d38_0 <- c("PTPRD", "GAP43", "MYT1L", "NRXN1", "STMN2", "DCX", "DSCAM", "CRABP1", "CACNA2D3", "UNC5D", "DACH1", "MAP2", "CTNNA2", "XKR4", 
+                     "ELAV4", "SOX11", "RELN", "MAPT", "DLL3", "NXPH1", "RND3", "NCAM1")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_0)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 1 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 0 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_1 <- c("COL1A1", "POSTN", "COL3A1", "COL1A2", "LUM", "LGALS1")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_1)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 1 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 1 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_2 <- c("PTPRZ1", "CDH20", "FABP7", "PHYHIPL", "NPAS3", "ERBB4", "SOX2", "HES5", "NES", "NKX6-2", "NKX2-2", "PAX6")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_2)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 2 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 2 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_3 <- c("NTRK2",  "HS3ST4", "GRIN2A", "TPPP3",  "SLIT1", "SLIT2", "TRABD2B", "PPP1R14C", "SPON1", "ARMC3")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_3)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 3 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 3 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_4 <- c("GDF15", "GBE1", "P4HA1")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_4)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 4 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 4 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_5 <- unique(c("EPHA5", "DLX1", "TENM2", "SYT1", "ATRNL1", "DCC", "NRXN3", "MTUS2", "DCLK1", "FAM155A", "LRRTM3", 
+                     "LRRTM4", "NOVA1", "ZIC1", "PPFIA2", "GAD2", "ASCL1", "ELAVL4", "ELAVL3", "DLX2", "DCX", 'ASCL1'))
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_5)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 5 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 5 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_6 <- c("SLC44A5", "CLSTN2", "KCNB2", "PCDH7", "KCNIP4", "STMN2", "PCDH15", "GRIK1", "NRG1", 
+                     "ELAVL2", "LRP1B", "NELL1", "GAP43", "RALYL", "CDH12", 'DCX', "NEFL", "NEFM", "SLIT3", "NCAM1", "ISL1", 'MNX1', "CHAT")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_6)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 6 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 6 genes.pdf", plot = last_plot())
+```
+
+```{r}
+d38_7 <- c("ZEB2", "CADM1", "EYA1", "SLC35F1", "PRKCA", "SORCS1", "S100B", "CDH19", "MPZ", "PLP1", 'MOXD1', "MEF2C", 'EGFLAM', 'LAMA4')
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_7)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 7 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 7 genes.pdf", plot = last_plot())
+```
+
+
+```{r}
+d38_8 <- c("MYOM1", "MYBPC1", "ACTN2", "TNNC2", "NEB", "ENO3", "TTN", "MYLPF", "ACTA1", "DES", "MYL1", "TNNT1", "TNNT3", 'TNNI1', "TNNI2", "MYBPH", "KLHL41", "ACTC1", "MYH3")
+
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = d38_8)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38 - Cluster 8 genes")
+
+ggsave(filename = "./plots/Day38 - Cluster 8 genes.pdf", plot = last_plot())
+```
+```{r, fig.width=20, fig.height=5}
+DotPlot(seurat_d38,
+        group.by = "RNA_snn_res.0.1",
+        features = unique(c(d38_0, d38_1, d38_2, d38_3, d38_4, d38_5, d38_6, d38_7, d38_8)))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day38")
+
+ggsave(filename = "./plots/Day38.pdf", plot = last_plot())
+```
+
+# Further questions
+
+## UMAP Splitted by cell line
+
+### All cells
+```{r, fig.height=10, fig.width=20}
+min_num <- min(table(seurat$merged))
+
+Idents(seurat) <- "merged"
+
+container <- list()
+
+for (group in unique(seurat$merged)) {
+  
+  seurat_filter <- subset(x = seurat, idents = group, downsample = min_num)
+  
+  seurat_filter
+  
+  container[["RNA_snn_res.0.1"]][[group]] <- DimPlot(seurat_filter, 
+                                                      reduction = "umap", 
+                                                      group.by = "RNA_snn_res.0.1",
+                                                      cols = rev(cluster_palette)) + 
+                                                  theme(aspect.ratio = 1) + 
+                                                  ggtitle(paste("All cells", group, "RNA_snn_res.0.1", sep = " - "))
+  
+}
+
+ggarrange(plotlist = container$RNA_snn_res.0.1, ncol = 4, nrow = 2)
+
+# rm(min_num, seurat_filter, group)
+```
+
+### Day 4
+```{r, fig.height=10, fig.width=20}
+min_num <- min(table(seurat_d4$merged))
+
+Idents(seurat_d4) <- "merged"
+
+container <- list()
+
+for (group in unique(seurat_d4$merged)) {
+  
+  seurat_filter <- subset(x = seurat_d4, idents = group, downsample = min_num)
+  
+  seurat_filter
+  
+  container[["RNA_snn_res.0.1"]][[group]] <- DimPlot(seurat_filter, 
+                                                      reduction = "umap", 
+                                                      group.by = "RNA_snn_res.0.1",
+                                                      cols = rev(cluster_palette)) + 
+                                                  theme(aspect.ratio = 1) + 
+                                                  ggtitle(paste("Day 4", group, "RNA_snn_res.0.1", sep = " - "))
+  
+}
+
+ggarrange(plotlist = container$RNA_snn_res.0.1, ncol = 4, nrow = 2)
+
+# rm(min_num, seurat_filter, group)
+```
+
+### Day 20
+```{r, fig.height=10, fig.width=20}
+min_num <- min(table(seurat_d20$merged))
+
+min_num <- 1000
+
+Idents(seurat_d20) <- "merged"
+
+container <- list()
+
+for (group in unique(seurat_d20$merged)) {
+  
+  seurat_filter <- subset(x = seurat_d20, idents = group, downsample = min_num)
+  
+  seurat_filter
+  
+  container[["RNA_snn_res.0.1"]][[group]] <- DimPlot(seurat_filter, 
+                                                      reduction = "umap", 
+                                                      group.by = "RNA_snn_res.0.1",
+                                                      cols = rev(cluster_palette)) + 
+                                                  theme(aspect.ratio = 1) + 
+                                                  ggtitle(paste("Day 20", group, "RNA_snn_res.0.1", sep = " - "))
+  
+}
+
+ggarrange(plotlist = container$RNA_snn_res.0.1, ncol = 4, nrow = 2)
+
+# rm(min_num, seurat_filter, group)
+```
+
+## Expression of SMN1 and SMN2
+```{r}
+VlnPlot(seurat, features = c("SMN1", "SMN2"), group.by = "merged_simple_time")
+```
+
+```{r}
+DotPlot(seurat,
+        group.by = "merged_simple_time",
+        features = c("SMN1", "SMN2"))+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip()
+```
+
+## Label clusters
+
+### Day 4
+```{r}
+seurat_d4$cell_type <-seurat_d4$RNA_snn_res.0.1
+
+Idents(seurat_d4) <- "cell_type"
+
+seurat_d4 <- RenameIdents(object = seurat_d4,
+                          "0" = "Neuroepithelium",
+                          "1" = "Neuroepithelium",
+                          "2" = "Mesoderm")
+
+seurat_d4@meta.data$cell_type <- Idents(seurat_d4)
+```
+
+```{r}
+DimPlot(seurat_d4, 
+        reduction = "umap", 
+        group.by = "cell_type",
+        cols = rev(cluster_palette)) + 
+        theme(aspect.ratio = 1)
+```
+
+### Day 20
+```{r}
+seurat_d20$cell_type <-seurat_d20$RNA_snn_res.0.1
+
+Idents(seurat_d20) <- "cell_type"
+
+seurat_d20 <- RenameIdents(object = seurat_d20,
+                           "0" = "Motoneurons",
+                           "1" = "Muscle",
+                           "2" = "Motoneurons",
+                           "3" = "Motoneurons",
+                           "4" = "Neural Progenitors",
+                           "5" = "Muscle",
+                           "6" = "Neuroepithelium",
+                           "7" = "Skeletal Muscle",
+                           "8" = "Adipose Tissue")
+
+seurat_d20@meta.data$cell_type <- Idents(seurat_d20)
+```
+
+```{r}
+DimPlot(seurat_d20, 
+        reduction = "umap", 
+        group.by = "cell_type",
+        cols = rev(cluster_palette), label = TRUE) + 
+        theme(aspect.ratio = 1)
+```
+
+### Day 38
+```{r}
+seurat_d38$cell_type <-seurat_d38$RNA_snn_res.0.1
+
+Idents(seurat_d38) <- "cell_type"
+
+seurat_d38 <- RenameIdents(object = seurat_d38,
+                           "0" = "Motoneurons",
+                           "1" = "Muscle",
+                           "2" = "Neural Progenitors",
+                           "3" = "Muscle_Neuro",
+                           "4" = "Muscle_Neuro",
+                           "5" = "Motoneurons",
+                           "6" = "Motoneurons",
+                           "7" = "Muscle_Neuro",
+                           "8" = "Muscle")
+
+seurat_d38@meta.data$cell_type <- Idents(seurat_d38)
+```
+
+```{r}
+DimPlot(seurat_d38, 
+        reduction = "umap", 
+        group.by = "cell_type",
+        cols = rev(cluster_palette), label = TRUE) + 
+        theme(aspect.ratio = 1)
+```
+
+## Differential Expression
+
+### Day 4
+
+```{r, fig.width=10, fig.height=8}
+# define comparisons
+comparisons<-data.frame(comparison=c("38D_ctrlvsBJ_WT","38D_2vs38D_ctrl","38D_4vs38D_ctrl","38D_2vsBJ_WT","38D_4vsBJ_WT", "51N_ctrlvsBJ_WT","51N_1vs51N_ctrl","51N_2vs51N_ctrl","51N_1vsBJ_WT","51N_2vsBJ_WT"),
+               group1=c("38D_ctrl","38D_2","38D_4","38D_2","38D_4", "51N_ctrl", "51N_1", "51N_2", "51N_1", "51N_2"),
+               group2=c("BJ_WT_ctrl","38D_ctrl","38D_ctrl", "BJ_WT_ctrl", "BJ_WT_ctrl", "BJ_WT_ctrl","51N_ctrl","51N_ctrl", "BJ_WT_ctrl", "BJ_WT_ctrl"))
+```
+
+```{r, fig.width=10, fig.height=8}
+#define cell types to include
+meta<-seurat_d4@meta.data
+meta %>% group_by(cell_type, merged) %>% summarise(n = n()) %>% filter(n<50) %>% pull(cell_type) -> exclude
+exclude <- c(unique(as.character(exclude)), "mixed")
+celltype_to_show<-levels(seurat_d4$cell_type)[!levels((seurat_d4$cell_type)) %in% exclude]
+
+DEgenes.d4<-data.frame()
+
+for(i in comparisons$comparison){
+  groups_oi<-as.vector(comparisons[comparisons$comparison==i,])
+  seurat_tmp<-subset(seurat_d4, subset = merged %in% groups_oi)
+  print(table(seurat_tmp$merged))
+
+  for(j in celltype_to_show){
+    Idents(seurat_tmp)<-"cell_type"
+    seurat_celltype<-subset(seurat_tmp, subset = cell_type==j)
+    print(table(seurat_celltype$cell_type))
+
+    Idents(seurat_celltype)<-"merged"
+    tmp <-FindMarkers(object = seurat_celltype,
+                      ident.1 = comparisons[comparisons$comparison==i,]$group1,
+                      ident.2 = comparisons[comparisons$comparison==i,]$group2,
+                      only.pos = FALSE,
+                      min.pct = 0.2,
+                      logfc.threshold = 0.25,
+                      test.use = "wilcox")
+    #add information
+    tmp$celltype<-j
+    # tmp$cluster<-paste0(j,"_",i)
+    tmp$comparison<-i
+    tmp$celltype_comparison<-paste0(j,"_",i)
+    tmp$gene<-row.names(tmp)
+    tmp$regulation<-ifelse(tmp$avg_log2FC>0,"up", "down")
+    tmp$significance<-ifelse(tmp$p_val_adj<0.05,"<0.05", "ns")
+
+    DEgenes.d4<-rbind(DEgenes.d4,tmp)
+    
+    # write.xlsx(tmp,
+    #            file = "./230517_tables/Day_4_DE_tabs.xlsx",
+    #            sheetName = paste0(j, "_", i), append = TRUE)
+    
+    gc()
+    
+  }
+}
+
+rm(seurat_tmp, seurat_celltype,groups_oi, tmp)
+```
+
+### Day 20
+
+```{r, fig.width=10, fig.height=8}
+#define cell types to include
+meta<-seurat_d20@meta.data
+meta %>% group_by(cell_type, merged) %>% summarise(n = n()) %>% filter(n<50) %>% pull(cell_type) -> exclude
+exclude <- c(unique(as.character(exclude)), "mixed")
+celltype_to_show<-levels(seurat_d20$cell_type)[!levels((seurat_d20$cell_type)) %in% exclude]
+
+DEgenes.d20<-data.frame()
+
+for(i in comparisons$comparison){
+  groups_oi<-as.vector(comparisons[comparisons$comparison==i,])
+  seurat_tmp<-subset(seurat_d20, subset = merged %in% groups_oi)
+  print(table(seurat_tmp$merged))
+
+  for(j in celltype_to_show){
+    Idents(seurat_tmp)<-"cell_type"
+    seurat_celltype<-subset(seurat_tmp, subset = cell_type==j)
+    print(table(seurat_celltype$cell_type))
+
+    Idents(seurat_celltype)<-"merged"
+    tmp <-FindMarkers(object = seurat_celltype,
+                      ident.1 = comparisons[comparisons$comparison==i,]$group1,
+                      ident.2 = comparisons[comparisons$comparison==i,]$group2,
+                      only.pos = FALSE,
+                      min.pct = 0.2,
+                      logfc.threshold = 0.25,
+                      test.use = "wilcox")
+    #add information
+    tmp$celltype<-j
+    # tmp$cluster<-paste0(j,"_",i)
+    tmp$comparison<-i
+    tmp$celltype_comparison<-paste0(j,"_",i)
+    tmp$gene<-row.names(tmp)
+    tmp$regulation<-ifelse(tmp$avg_log2FC>0,"up", "down")
+    tmp$significance<-ifelse(tmp$p_val_adj<0.05,"<0.05", "ns")
+
+    DEgenes.d20<-rbind(DEgenes.d20,tmp)
+    
+    # write.xlsx(tmp,
+    #            file = "./230517_tables/Day_20_DE_tabs.xlsx",
+    #            sheetName = paste0(j, "_", i), append = TRUE)
+    
+    gc()
+  }
+}
+
+rm(seurat_tmp, seurat_celltype,groups_oi, tmp)
+
+# Export es table
+# write_csv(x = DEgenes.d20, file = "./tables/Day_20_DE.csv")
+```
+
+### Day 38
+
+```{r, fig.width=10, fig.height=8}
+#define cell types to include
+meta<-seurat_d38@meta.data
+meta %>% group_by(cell_type, merged) %>% summarise(n = n()) %>% filter(n<50) %>% pull(cell_type) -> exclude
+exclude <- c(unique(as.character(exclude)), "mixed")
+celltype_to_show<-levels(seurat_d38$cell_type)[!levels((seurat_d38$cell_type)) %in% exclude]
+
+DEgenes.d38<-data.frame()
+
+for(i in comparisons$comparison){
+  groups_oi<-as.vector(comparisons[comparisons$comparison==i,])
+  seurat_tmp<-subset(seurat_d38, subset = merged %in% groups_oi)
+  print(table(seurat_tmp$merged))
+
+  for(j in celltype_to_show){
+    Idents(seurat_tmp)<-"cell_type"
+    seurat_celltype<-subset(seurat_tmp, subset = cell_type==j)
+    print(table(seurat_celltype$cell_type))
+
+    Idents(seurat_celltype)<-"merged"
+    tmp <-FindMarkers(object = seurat_celltype,
+                      ident.1 = comparisons[comparisons$comparison==i,]$group1,
+                      ident.2 = comparisons[comparisons$comparison==i,]$group2,
+                      only.pos = FALSE,
+                      min.pct = 0.2,
+                      logfc.threshold = 0.25,
+                      test.use = "wilcox")
+    #add information
+    tmp$celltype<-j
+    # tmp$cluster<-paste0(j,"_",i)
+    tmp$comparison<-i
+    tmp$celltype_comparison<-paste0(j,"_",i)
+    tmp$gene<-row.names(tmp)
+    tmp$regulation<-ifelse(tmp$avg_log2FC>0,"up", "down")
+    tmp$significance<-ifelse(tmp$p_val_adj<0.05,"<0.05", "ns")
+
+    DEgenes.d38<-rbind(DEgenes.d38,tmp)
+    
+    # write.xlsx(tmp,
+    #            file = "./230517_tables/Day_38_DE_tabs.xlsx",
+    #            sheetName = paste0(j, "_", i), append = TRUE)
+    
+    gc()
+    
+  }
+}
+
+rm(seurat_tmp, seurat_celltype,groups_oi, tmp)
+
+# Export es table
+# write_csv(x = DEgenes.d38, file = "./tables/Day_38_DE.csv")
+```
+
+# GSEA
+
+## Load gene set annotation
+
+```{r}
+hallmark_genes <- clusterProfiler::read.gmt("/data/rodriguez_muela_10x/analysis/GMTfiles/h.all.v2023.1.Hs.symbols.gmt")
+motif_genes <- clusterProfiler::read.gmt("/data/rodriguez_muela_10x/analysis/GMTfiles/c3.tft.v2023.1.Hs.symbols.gmt")
+kegg_genes <- clusterProfiler::read.gmt("/data/rodriguez_muela_10x/analysis/GMTfiles/c2.cp.kegg.v2023.1.Hs.symbols.gmt")
+go_bp_genes <- clusterProfiler::read.gmt("/data/rodriguez_muela_10x/analysis/GMTfiles/c5.go.bp.v2023.1.Hs.symbols.gmt")
+```
+
+# GSEA DE Genes
+
+## Prepare the list of DE genes
+
+```{r}
+DEgenes.d4$for_enrichent <- paste0(DEgenes.d4$celltype_comparison, "_", DEgenes.d4$regulation)
+
+DEgenes.d20$for_enrichent <- paste0(DEgenes.d20$celltype_comparison, "_", DEgenes.d20$regulation)
+
+DEgenes.d38$for_enrichent <- paste0(DEgenes.d38$celltype_comparison, "_", DEgenes.d38$regulation)
+```
+
+
+## Functional enrichment DE day 4
+
+```{r}
+mtx_day4 <- GetAssayData(seurat_d4, slot="counts")
+mtx_day4 <- mtx_day4[rowSums(mtx_day4)>3,]
+
+# defined present genes
+present_genes <- rownames(mtx_day4)
+
+GOresults.list <- list()
+KEGGresults.list <- list()
+HALLMARKresults.list <- list()
+MOTIVresults.list <- list()
+
+for(i in unique(DEgenes.d4$for_enrichent)){
+  print(i)
+  markers <- DEgenes.d4[DEgenes.d4$for_enrichent==i,]
+  print(paste("cluster: ",i, ", marker genes: ",paste(markers$gene[1:10],collapse=", "),", ...",sep=""))
+  
+  markers_symbol <- markers$gene
+
+  # GO enrichment
+  GO <- as.data.frame(enricher(markers$gene,
+                               TERM2GENE=go_bp_genes,
+                               universe = present_genes,  
+                               pAdjustMethod = "bonferroni",
+                               pvalueCutoff  = 0.2,
+                               qvalueCutoff  = 0.2))
+  
+  if(nrow(GO)>0){GO$cluster <- as.character(i)}
+  
+  # KEGG enrichment
+  KEGG <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=kegg_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(KEGG)>0){KEGG$cluster <- paste("cluster ",i, sep="")}
+
+  # HALLMARK enrichment
+  HALLMARK <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=hallmark_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(HALLMARK)>0){HALLMARK$cluster <- paste("cluster ",i, sep="")}
+  
+  # TF Motiv enrichment
+  MOTIV <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=motif_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(MOTIV)>0){MOTIV$cluster <- paste("cluster ",i, sep="")}
+  
+  if(nrow(GO)>0){GOresults.list[[paste(i)]] <- GO}
+  if(nrow(KEGG)>0){KEGGresults.list[[paste(i)]] <- KEGG}
+  if(nrow(HALLMARK)>0){HALLMARKresults.list[[paste(i)]] <- HALLMARK}
+  if(nrow(MOTIV)>0){MOTIVresults.list[[paste(i)]] <- MOTIV}
+}
+```
+
+## Visualization
+
+### MOTIV
+
+```{r, fig.width=12, fig.height=12}
+MOTIVresults <- do.call("rbind", MOTIVresults.list)
+
+MOTIVresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- MOTIVresults[MOTIVresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### HALLMARK
+
+```{r, fig.width=12, fig.height=12}
+HALLMARKresults <- do.call("rbind", HALLMARKresults.list)
+
+HALLMARKresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- HALLMARKresults[HALLMARKresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### GO
+
+```{r, fig.width=12, fig.height=12}
+GOresults <- do.call("rbind", GOresults.list)
+
+GOresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- GOresults[GOresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### KEGG
+
+```{r, fig.width=12, fig.height=12}
+KEGGresults <- do.call("rbind", KEGGresults.list)
+
+KEGGresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+tmp <- KEGGresults[KEGGresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### Merge the results
+```{r}
+GSEA_DE_d4 <- list("GOresults.list" = GOresults.list, 
+                   "KEGGresults.list" = KEGGresults.list, 
+                   "MOTIVresults.list" = MOTIVresults.list, 
+                   "HALLMARKresults.list" = HALLMARKresults.list)
+```
+
+## Functional enrichment DE day 20
+
+```{r}
+mtx_day20 <- GetAssayData(seurat_d20, slot="counts")
+mtx_day20 <- mtx_day20[rowSums(mtx_day20)>3,]
+
+# defined present genes
+present_genes <- rownames(mtx_day20)
+
+GOresults.list <- list()
+KEGGresults.list <- list()
+HALLMARKresults.list <- list()
+MOTIVresults.list <- list()
+
+for(i in unique(DEgenes.d20$for_enrichent)){
+  print(i)
+  markers <- DEgenes.d20[DEgenes.d20$for_enrichent==i,]
+  print(paste("cluster: ",i, ", marker genes: ",paste(markers$gene[1:10],collapse=", "),", ...",sep=""))
+  
+  markers_symbol <- markers$gene
+  
+  # GO enrichment
+  GO <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=go_bp_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  
+  if(nrow(GO)>0){GO$cluster <- as.character(i)}
+  
+  # KEGG enrichment
+  KEGG <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=kegg_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(KEGG)>0){KEGG$cluster <- paste("cluster ",i, sep="")}
+
+  # HALLMARK enrichment
+  HALLMARK <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=hallmark_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(HALLMARK)>0){HALLMARK$cluster <- paste("cluster ",i, sep="")}
+  
+  # TF Motiv enrichment
+  MOTIV <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=motif_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(MOTIV)>0){MOTIV$cluster <- paste("cluster ",i, sep="")}
+  
+  if(nrow(GO)>0){GOresults.list[[paste(i)]] <- GO}
+  if(nrow(KEGG)>0){KEGGresults.list[[paste(i)]] <- KEGG}
+  if(nrow(HALLMARK)>0){HALLMARKresults.list[[paste(i)]] <- HALLMARK}
+  if(nrow(MOTIV)>0){MOTIVresults.list[[paste(i)]] <- MOTIV}
+}
+```
+
+## Visualization
+
+### MOTIV
+
+```{r, fig.width=16, fig.height=19}
+MOTIVresults <- do.call("rbind", MOTIVresults.list)
+
+MOTIVresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- MOTIVresults[MOTIVresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### HALLMARK
+
+```{r, fig.width=16, fig.height=12}
+HALLMARKresults <- do.call("rbind", HALLMARKresults.list)
+
+HALLMARKresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- HALLMARKresults[HALLMARKresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### GO
+
+```{r, fig.width=16, fig.height=18}
+GOresults <- do.call("rbind", GOresults.list)
+
+GOresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- GOresults[GOresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### KEGG
+
+```{r, fig.width=16, fig.height=12}
+KEGGresults <- do.call("rbind", KEGGresults.list)
+
+KEGGresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+tmp <- KEGGresults[KEGGresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### Merge the results
+```{r}
+GSEA_DE_d20 <- list("GOresults.list" = GOresults.list, 
+                    "KEGGresults.list" = KEGGresults.list, 
+                    "MOTIVresults.list" = MOTIVresults.list, 
+                    "HALLMARKresults.list" = HALLMARKresults.list)
+```
+
+## Functional enrichment DE day 38
+
+```{r}
+mtx_day38 <- GetAssayData(seurat_d38, slot="counts")
+mtx_day38 <- mtx_day38[rowSums(mtx_day38)>3,]
+
+# defined present genes
+present_genes <- rownames(mtx_day38)
+
+GOresults.list <- list()
+KEGGresults.list <- list()
+HALLMARKresults.list <- list()
+MOTIVresults.list <- list()
+
+for(i in unique(DEgenes.d38$for_enrichent)){
+  print(i)
+  markers <- DEgenes.d38[DEgenes.d38$for_enrichent==i,]
+  print(paste("cluster: ",i, ", marker genes: ",paste(markers$gene[1:10],collapse=", "),", ...",sep=""))
+  
+  markers_symbol <- markers$gene
+  
+  # GO enrichment
+  GO <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=go_bp_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  
+  if(nrow(GO)>0){GO$cluster <- as.character(i)}
+  
+  # KEGG enrichment
+  KEGG <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=kegg_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(KEGG)>0){KEGG$cluster <- paste("cluster ",i, sep="")}
+
+  # HALLMARK enrichment
+  HALLMARK <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=hallmark_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(HALLMARK)>0){HALLMARK$cluster <- paste("cluster ",i, sep="")}
+  
+  # TF Motiv enrichment
+  MOTIV <- as.data.frame(enricher(markers$gene,
+                                     TERM2GENE=motif_genes,
+                                     universe = present_genes,  
+                                     pAdjustMethod = "bonferroni",
+                                     pvalueCutoff  = 0.2,
+                                     qvalueCutoff  = 0.2))
+  if(nrow(MOTIV)>0){MOTIV$cluster <- paste("cluster ",i, sep="")}
+  
+  if(nrow(GO)>0){GOresults.list[[paste(i)]] <- GO}
+  if(nrow(KEGG)>0){KEGGresults.list[[paste(i)]] <- KEGG}
+  if(nrow(HALLMARK)>0){HALLMARKresults.list[[paste(i)]] <- HALLMARK}
+  if(nrow(MOTIV)>0){MOTIVresults.list[[paste(i)]] <- MOTIV}
+}
+```
+
+## Visualization
+
+### MOTIV
+
+```{r, fig.width=18, fig.height=23}
+MOTIVresults <- do.call("rbind", MOTIVresults.list)
+
+MOTIVresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- MOTIVresults[MOTIVresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### HALLMARK
+
+```{r, fig.width=16, fig.height=18}
+HALLMARKresults <- do.call("rbind", HALLMARKresults.list)
+
+HALLMARKresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- HALLMARKresults[HALLMARKresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### GO
+
+```{r, fig.width=16, fig.height=20}
+GOresults <- do.call("rbind", GOresults.list)
+
+GOresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+
+tmp <- GOresults[GOresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### KEGG
+
+```{r, fig.width=12, fig.height=12}
+KEGGresults <- do.call("rbind", KEGGresults.list)
+
+KEGGresults %>% group_by(cluster) %>% top_n(n= 10, wt = Count) -> terms
+tmp <- KEGGresults[KEGGresults$Description %in% terms$Description,]
+tmp$Description <- ifelse(nchar(tmp$Description)>80,
+                          paste(substr(tmp$Description, 1, 80),"[...]",sep=""),
+                          tmp$Description)
+tmp$Description <- factor(tmp$Description,levels=unique(tmp$Description))
+
+ggplot(tmp, aes(x = cluster, y = Description, color = p.adjust)) +
+  geom_point(aes(size = Count)) +
+  scale_colour_gradientn(colours=c('red', 
+                                   'orange', 
+                                   'darkblue',
+                                   'darkblue'),
+                         limits=c(0,1),
+                         values   = c(0,0.05,0.2,0.5,1),
+                         breaks   = c(0.05,0.2,1),
+                         labels = format(c(0.05,0.2,1))) +
+  ylab(NULL) +
+  theme_bw() +
+  theme(text = element_text(size=12))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+### Merge the results
+```{r}
+GSEA_DE_d38 <- list("GOresults.list" = GOresults.list, 
+                    "KEGGresults.list" = KEGGresults.list, 
+                    "MOTIVresults.list" = MOTIVresults.list, 
+                    "HALLMARKresults.list" = HALLMARKresults.list)
+```
+
+## Export GSEA Tables
+
+### Day4
+```{r}
+library(xlsx)
+
+# write.xlsx(do.call("rbind", GSEA_DE_d4$GOresults.list),
+#            file = "./230517_tables/GSEA_DE_d4.xlsx",
+#            sheetName = "GOresults", append = FALSE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d4$KEGGresults.list),
+#            file = "./230517_tables/GSEA_DE_d4.xlsx",
+#            sheetName = "KEGGresults", append = TRUE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d4$MOTIVresults.list),
+#            file = "./230517_tables/GSEA_DE_d4.xlsx",
+#            sheetName = "MOTIVresults", append = TRUE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d4$HALLMARKresults.list),
+#            file = "./230517_tables/GSEA_DE_d4.xlsx",
+#            sheetName = "HALLMARKresults", append = TRUE)
+```
+
+### Day20
+```{r}
+# write.xlsx(do.call("rbind", GSEA_DE_d20$GOresults.list),
+#            file = "./230517_tables/GSEA_DE_d20.xlsx",
+#            sheetName = "GOresults", append = FALSE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d20$KEGGresults.list),
+#            file = "./230517_tables/GSEA_DE_d20.xlsx",
+#            sheetName = "KEGGresults", append = TRUE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d20$MOTIVresults.list),
+#            file = "./230517_tables/GSEA_DE_d20.xlsx",
+#            sheetName = "MOTIVresults", append = TRUE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d20$HALLMARKresults.list),
+#            file = "./230517_tables/GSEA_DE_d20.xlsx",
+#            sheetName = "HALLMARKresults", append = TRUE)
+```
+
+### Day20
+```{r}
+# write.xlsx(do.call("rbind", GSEA_DE_d38$GOresults.list),
+#            file = "./230517_tables/GSEA_DE_d38.xlsx",
+#            sheetName = "GOresults", append = FALSE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d38$KEGGresults.list),
+#            file = "./230517_tables/GSEA_DE_d38.xlsx",
+#            sheetName = "KEGGresults", append = TRUE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d38$MOTIVresults.list),
+#            file = "./230517_tables/GSEA_DE_d38.xlsx",
+#            sheetName = "MOTIVresults", append = TRUE)
+# 
+# write.xlsx(do.call("rbind", GSEA_DE_d38$HALLMARKresults.list),
+#            file = "./230517_tables/GSEA_DE_d38.xlsx",
+#            sheetName = "HALLMARKresults", append = TRUE)
+```
+
+# Table Export
+
+```{r}
+# de_table <- c("markers.wilcox_res.0.1",
+#               "d4.markers.wilcox_res.0.1",
+#               "d20.markers.wilcox_res.0.1",
+#               "d38.markers.wilcox_res.0.1")
+# 
+# for (table in de_table) {
+# 
+#   print(table)
+# 
+#   gc()
+# 
+#   write.xlsx(x = get(table),
+#             file = paste0("/data/rodriguez_muela_10x/analysis/230517_tables/", table, ".xlsx"))
+# 
+# }
+```
+
+```{r}
+# de_table <- c("DEgenes.d4", 
+#               "DEgenes.d20", 
+#               "DEgenes.d38")
+# 
+# for (table in de_table) {
+# 
+#   print(table)
+# 
+#   gc()
+# 
+#   write.xlsx(x = get(table),
+#             file = paste0("/data/rodriguez_muela_10x/analysis/230517_tables/", table, ".xlsx"))
+# 
+# }
+```
+
+# Validate cell labels from Natalia
+```{r}
+muscle <- all_gs[grepl(pattern = "MESODERMAL", names(all_gs))]
+
+names(muscle)
+```
+
+```{r, message=F, warning=F}
+seurat_d4 <- AddModuleScore(object = seurat_d4, 
+                             features = all_gs["GOBP_NEURAL_CREST_CELL_FATE_COMMITMENT"], 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d4@meta.data)[grepl(pattern = "sign_", colnames(seurat_d4@meta.data))] <- "GOBP_NEURAL_CREST_CELL_FATE_COMMITMENT"
+```
+
+```{r}
+Idents(seurat_d4) <- "RNA_snn_res.0.1"
+  
+VlnPlot(seurat_d4,
+        features = "GOBP_NEURAL_CREST_CELL_FATE_COMMITMENT",
+        pt.size = 0)
+
+```
+
+```{r, message=F, warning=F}
+seurat_d20 <- AddModuleScore(object = seurat_d20, 
+                             features = all_gs["GOBP_MESODERMAL_CELL_DIFFERENTIATION"], 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d20@meta.data)[grepl(pattern = "sign_", colnames(seurat_d20@meta.data))] <- "GOBP_MESODERMAL_CELL_DIFFERENTIATION"
+```
+
+```{r}
+Idents(seurat_d20) <- "cell_type_paper"
+  
+VlnPlot(seurat_d20,
+        features = "GOBP_MESODERMAL_CELL_DIFFERENTIATION",
+        pt.size = 0)
+
+```
+
+```{r, message=F, warning=F}
+seurat_d20 <- AddModuleScore(object = seurat_d20, 
+                             features = all_gs["DESCARTES_FETAL_MUSCLE_SMOOTH_MUSCLE_CELLS"], 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d20@meta.data)[grepl(pattern = "sign_", colnames(seurat_d20@meta.data))] <- "DESCARTES_FETAL_MUSCLE_SMOOTH_MUSCLE_CELLS"
+```
+
+```{r}
+Idents(seurat_d20) <- "cell_type_paper"
+  
+VlnPlot(seurat_d20,
+        features = "DESCARTES_FETAL_MUSCLE_SMOOTH_MUSCLE_CELLS",
+        pt.size = 0)
+
+```
+
+```{r, message=F, warning=F}
+seurat_d20 <- AddModuleScore(object = seurat_d20, 
+                             features = all_gs["DURANTE_ADULT_OLFACTORY_NEUROEPITHELIUM_VASCULAR_SMOOTH_MUSCLE_CELLS"], 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d20@meta.data)[grepl(pattern = "sign_", colnames(seurat_d20@meta.data))] <- "DURANTE_ADULT_OLFACTORY_NEUROEPITHELIUM_VASCULAR_SMOOTH_MUSCLE_CELLS"
+```
+
+```{r}
+Idents(seurat_d20) <- "RNA_snn_res.0.1"
+  
+VlnPlot(seurat_d20,
+        features = "DURANTE_ADULT_OLFACTORY_NEUROEPITHELIUM_VASCULAR_SMOOTH_MUSCLE_CELLS",
+        pt.size = 0)
+
+```
+
+```{r, message=F, warning=F}
+seurat_d38 <- AddModuleScore(object = seurat_d38, 
+                             features = list(d20.markers.wilcox_res.0.1[d20.markers.wilcox_res.0.1$cluster == 1,]$gene), 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d38@meta.data)[grepl(pattern = "sign_", colnames(seurat_d38@meta.data))] <- "Cl1_MG"
+```
+
+```{r}
+Idents(seurat_d38) <- "RNA_snn_res.0.1"
+  
+VlnPlot(seurat_d38,
+        features = "Cl1_MG",
+        pt.size = 0)
+
+```
+
+```{r, message=F, warning=F}
+seurat_d38 <- AddModuleScore(object = seurat_d38, 
+                             features = all_gs["LE_NEURONAL_DIFFERENTIATION_UP"], 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d38@meta.data)[grepl(pattern = "sign_", colnames(seurat_d38@meta.data))] <- "LE_NEURONAL_DIFFERENTIATION_UP"
+```
+
+```{r}
+Idents(seurat_d38) <- "RNA_snn_res.0.1"
+  
+VlnPlot(seurat_d38,
+        features = "LE_NEURONAL_DIFFERENTIATION_UP",
+        pt.size = 0)
+
+```
+
+```{r, message=F, warning=F}
+seurat_d38 <- AddModuleScore(object = seurat_d38, 
+                             features = all_gs["DESCARTES_FETAL_MUSCLE_SMOOTH_MUSCLE_CELLS"], 
+                             name = 'sign_', search = TRUE)
+```
+
+```{r}
+colnames(seurat_d38@meta.data)[grepl(pattern = "sign_", colnames(seurat_d38@meta.data))] <- "DESCARTES_FETAL_MUSCLE_SMOOTH_MUSCLE_CELLS"
+```
+
+```{r}
+Idents(seurat_d38) <- "RNA_snn_res.0.1"
+  
+VlnPlot(seurat_d38,
+        features = "DESCARTES_FETAL_MUSCLE_SMOOTH_MUSCLE_CELLS",
+        pt.size = 0)
+
+```
+
+# Figures Maniuscript
+
+## Figure 7B
+```{r}
+seurat
+
+DimPlot(seurat, reduction = "umap", 
+        group.by = "day_differentiation", pt.size = 1) + 
+  theme(aspect.ratio = 1) + scale_color_aaas() + ggtitle("Figure 7B")
+```
+
+## Figure 7C
+
+### Colors
+```{r}
+names_clusters <- c("NMPs", "NSCs", "NCCs", 
+                    "pMN", "Smooth muscle/Myoblast", "MN", "NPCs", "Proliferative NPCs", "Smooth muscle/Myofibroblast", "Schwann cells", "Skeletal Muscle", 
+                    "Endothelial cells", "NSCs/NPCs", "Mixed Progenitors", "Immature MN", "NCC derivatives")
+
+cluster_palette_paper <- c("#89C5DA", "#DA5724", "#74D944", "#CE50CA", "#3F4921", "#C0717C", "#CBD588", "#5F7FC7",
+                           "#673770", "#D3D93E", "#CD9BCD", "#38333E", "#508578", "#D7C1B1", "#689030", "#AD6F3B")
+
+names(cluster_palette_paper) <- names_clusters
+```
+
+
+### Day 4
+```{r}
+seurat_d4$cell_type_paper <-seurat_d4$RNA_snn_res.0.1
+
+Idents(seurat_d4) <- "cell_type_paper"
+
+seurat_d4 <- RenameIdents(object = seurat_d4,
+                          "0" = "NMPs",
+                          "1" = "NSCs",
+                          "2" = "NCCs")
+
+seurat_d4@meta.data$cell_type_paper <- Idents(seurat_d4)
+```
+
+```{r}
+DimPlot(seurat_d4, 
+        reduction = "umap", 
+        group.by = "cell_type_paper",
+        cols = cluster_palette_paper) + 
+        theme(aspect.ratio = 1)
+```
+
+### Day 20
+```{r}
+seurat_d20$cell_type_paper <-seurat_d20$RNA_snn_res.0.1
+
+Idents(seurat_d20) <- "cell_type_paper"
+
+seurat_d20 <- RenameIdents(object = seurat_d20,
+                           "0" = "pMN",
+                           "1" = "Smooth muscle/Myoblast",
+                           "2" = "MN",
+                           "3" = "NPCs",
+                           "4" = "Proliferative NPCs",
+                           "5" = "Smooth muscle/Myofibroblast",
+                           "6" = "Schwann cells",
+                           "7" = "Skeletal Muscle",
+                           "8" = "Endothelial cells")
+
+seurat_d20@meta.data$cell_type_paper <- Idents(seurat_d20)
+```
+
+```{r}
+DimPlot(seurat_d20, 
+        reduction = "umap", 
+        group.by = "cell_type_paper",
+        cols = cluster_palette_paper) + 
+        theme(aspect.ratio = 1)
+```
+
+### Day 38
+```{r}
+seurat_d38$cell_type_paper <-seurat_d38$RNA_snn_res.0.1
+
+Idents(seurat_d38) <- "cell_type_paper"
+
+seurat_d38 <- RenameIdents(object = seurat_d38,
+                           "0" = "NPCs",
+                           "1" = "Smooth muscle/Myoblast",
+                           "2" = "NSCs/NPCs",
+                           "3" = "Mixed Progenitors",
+                           "4" = "Mixed Progenitors",
+                           "5" = "Immature MN",
+                           "6" = "MN",
+                           "7" = "NCC derivatives",
+                           "8" = "Skeletal Muscle")
+
+seurat_d38@meta.data$cell_type_paper <- Idents(seurat_d38)
+```
+
+```{r}
+DimPlot(seurat_d38, 
+        reduction = "umap", 
+        group.by = "cell_type_paper",
+        cols = cluster_palette_paper) + 
+        theme(aspect.ratio = 1)
+```
+
+## Density plot
+```{r}
+library(ggrastr)
+
+data <- cbind(as.data.frame(seurat_d4@reductions$umap@cell.embeddings), seurat_d4@meta.data)
+
+group_density <- list()
+
+sequence <- unique(data$merged_simple)
+
+sequence <- sequence[order(sequence)]
+
+color_density <- c("Blues", "BuGn", "Oranges", "YlGn", "Greens")
+
+names(color_density) <- sequence
+
+  for (i in sequence) {
+
+    p <- ggplot(data = data, aes(x = UMAP_1, y = UMAP_2)) +
+      geom_point_rast(fill="grey",color="grey",size=1, alpha=1) +
+      theme_bw() +
+      theme(aspect.ratio = 1, panel.grid = element_blank()) +
+      stat_density_2d(data = data[data$merged_simple == i, ],
+                      aes(x = UMAP_1, y = UMAP_2, fill = ..level..),
+                      geom = "polygon", contour = T, h = 1) +
+      scale_fill_distiller(palette = color_density[i], direction = 1) +
+      ggtitle(i)
+
+    group_density[[i]] <- p
+
+  }
+
+ggarrange(plotlist = group_density)
+```
+
+```{r}
+library(ggrastr)
+
+data <- cbind(as.data.frame(seurat_d20@reductions$umap@cell.embeddings), seurat_d20@meta.data)
+
+group_density <- list()
+
+sequence <- unique(data$merged_simple)
+
+sequence <- sequence[order(sequence)]
+
+color_density <- c("Blues", "BuGn", "Oranges", "YlGn", "Greens")
+
+names(color_density) <- sequence
+
+  for (i in sequence) {
+
+    p <- ggplot(data = data, aes(x = UMAP_1, y = UMAP_2)) +
+      geom_point_rast(fill="grey",color="grey",size=1, alpha=1) +
+      theme_bw() +
+      theme(aspect.ratio = 1, panel.grid = element_blank()) +
+      stat_density_2d(data = data[data$merged_simple == i, ],
+                      aes(x = UMAP_1, y = UMAP_2, fill = ..level..),
+                      geom = "polygon", contour = T, h = 1) +
+      scale_fill_distiller(palette = color_density[i], direction = 1) +
+      ggtitle(i)
+
+    group_density[[i]] <- p
+
+  }
+
+# ggarrange(plotlist = group_density)
+```
+
+```{r}
+library(ggrastr)
+
+data <- cbind(as.data.frame(seurat_d38@reductions$umap@cell.embeddings), seurat_d38@meta.data)
+
+group_density <- list()
+
+sequence <- unique(data$merged_simple)
+
+sequence <- sequence[order(sequence)]
+
+color_density <- c("Blues", "BuGn", "Oranges", "YlGn", "Greens")
+
+names(color_density) <- sequence
+
+  for (i in sequence) {
+
+    p <- ggplot(data = data, aes(x = UMAP_1, y = UMAP_2)) +
+      geom_point_rast(fill="grey",color="grey",size=1, alpha=1) +
+      theme_bw() +
+      theme(aspect.ratio = 1, panel.grid = element_blank()) +
+      stat_density_2d(data = data[data$merged_simple == i, ],
+                      aes(x = UMAP_1, y = UMAP_2, fill = ..level..),
+                      geom = "polygon", contour = T, h = 1) +
+      scale_fill_distiller(palette = color_density[i], direction = 1) +
+      ggtitle(i)
+
+    group_density[[i]] <- p
+
+  }
+
+# group_density
+```
+
+## Confusion Matrixes
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d4$cell_type_paper),
+                                 paste0(seurat_d4$merged_simple))
+
+cells_cluster <- cells_cluster[,c("BJ_WT_ctrl", "38D_ctrl", "38D_recover", "51N_ctrl", "51N_recover")]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = FALSE, cellwidth = 40, cellheight = 40
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d20$cell_type_paper),
+                                 paste0(seurat_d20$merged_simple))
+
+cells_cluster <- cells_cluster[,c("BJ_WT_ctrl", "38D_ctrl", "38D_recover", "51N_ctrl", "51N_recover")]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = FALSE, cellwidth = 40, cellheight = 40
+)
+```
+
+```{r}
+cells_cluster <- confusionMatrix(paste0(seurat_d38$cell_type_paper),
+                                 paste0(seurat_d38$merged_simple))
+
+cells_cluster <- cells_cluster[,c("BJ_WT_ctrl", "38D_ctrl", "38D_recover", "51N_ctrl", "51N_recover")]
+
+# normalize to 1000 cells per sample
+tmp <- round(t(t(cells_cluster)/colSums(cells_cluster))*100,3)
+
+pheatmap::pheatmap(
+  mat = as.matrix(tmp),
+  border_color = "black",display_numbers = TRUE,
+  cluster_rows = FALSE, 
+  cluster_cols = FALSE, cellwidth = 40, cellheight = 40
+)
+```
+
+## Dotplots
+```{r}
+d4_markers_paper <- c(d4_0, d4_1, d4_2)
+
+d4_markers_paper <- d4_markers_paper[!d4_markers_paper %in% c("HOXB-AS3", "HOXA-AS3", "HOXB-AS1", "HOXD3")]
+
+DotPlot(seurat_d4,
+        group.by = "cell_type_paper",
+        features = d4_markers_paper)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day4 - Markers")
+```
+
+```{r, fig.width=18, fig.height=5}
+d20_markers_paper <- unique(c(d20_0, d20_1, d20_2, d20_3, d20_4, d20_5, d20_6, d20_7, d20_8))
+
+d20_markers_paper <- d20_markers_paper[!d20_markers_paper %in% c("COL4A1", "ZIC1", "PIPM22", "MYBPH")]
+
+DotPlot(seurat_d20,
+        group.by = "cell_type_paper",
+        features = d20_markers_paper)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day20 - Markers")
+```
+
+```{r, fig.width=21, fig.height=5}
+d38_markers_paper <- c("RELN", "GAP43", "MYT1L", "NRXN1", "DSCAM", "CACNA2D3", "UNC5D", "MAP2", "CTNNA2", "XKR4", "ELAV4", "SOX11", "MAPT", "DLL3", "NXPH1", "RND3", "NCAM1", "COL1A1", "POSTN", "COL3A1", "COL1A2", "LUM", "LGALS1", "PTPRZ1", "CDH20", "FABP7", "PHYHIPL", "NPAS3", "ERBB4", "SOX2", "HES5", "NKX6-2", "NKX2-2", "PAX6", "NTRK2", "HS3ST4", "GRIN2A", "TPPP3", "SLIT1", "TRABD2B", "PPP1R14C", "SPON1", "ARMC3", "GDF15", "GBE1", "P4HA1", "EPHA5", "DLX1", "TENM2", "SYT1", "ATRNL1", "DCC", "NRXN3", "MTUS2", "FAM155A", "LRRTM3", "LRRTM4", "NOVA1", "ZIC1", "PPFIA2", "GAD2", "ASCL1", "ELAVL4", "ELAVL3", "DLX2", "STMN2", "SLC44A5", "KCNB2", "PCDH7", "KCNIP4", "PCDH15", "GRIK1", "NRG1", "ELAVL2", "LRP1B", "NELL1", "RALYL", "CDH12", "NEFL", "NEFM", "SLIT3", "ISL1", "MNX1", "CHAT", "ZEB2", "EYA1", "SLC35F1", "PRKCA", "SORCS1", "S100B", "CDH19", "MPZ", "PLP1", "MOXD1", "EGFLAM", "LAMA4", "MYOM1", "MYBPC1", "ACTN2", "TNNC2", "NEB", "ENO3", "TTN", "MYLPF", "ACTA1", "DES", "MYL1", "TNNT1", "TNNT3", "TNNI1", "TNNI2", "MYBPH", "KLHL41", "ACTC1", "MYH3")
+
+DotPlot(seurat_d38,
+        group.by = "cell_type_paper",
+        features = d38_markers_paper)+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Day40 - Markers")
+```
+
+
+# Session Info
+
+```{r}
+info <- sessionInfo()
+
+info
+```
