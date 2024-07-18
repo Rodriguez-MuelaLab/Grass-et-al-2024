@@ -1,0 +1,68 @@
+---
+title: "Untitled"
+author: "Dokuzluoglu Zeynep"
+output: html_document
+date: "2024-07-18"
+---
+
+# Loading Libraries
+
+```{r}
+library(Seurat)
+library(SeuratDisk)
+library(ggplot2)
+library(SingleR)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(ggpubr)
+library(reshape2)
+library(fgsea)
+library(tidyverse)
+library(readxl)
+```
+
+# Load Seurat Objects 
+
+```{r}
+seurat_d4 <- LoadH5Seurat("./seurat_objects/230304_seurat_grass_2023.h5Seurat")
+seurat_d20 <- LoadH5Seurat("./seurat_objects/230304_seurat_grass_2023.h5Seurat")
+```
+
+# Reorganize order of samples
+
+```{r}
+seurat_d4@meta.data$merged_simple <- factor(seurat_d4@meta.data$merged_simple, levels = c("BJ_WT_ctrl","51N_ctrl","51N_recover","38D_ctrl","38D_recover"))
+seurat_d20@meta.data$merged_simple <- factor(seurat_d20@meta.data$merged_simple, levels = c("BJ_WT_ctrl","51N_ctrl","51N_recover","38D_ctrl","38D_recover"))
+```
+
+# Arrange Gene Sets
+
+```{r}
+gene_set_isogpaper_Figure6N_A <-c("WNT3A")
+gene_set_isogpaper_Figure6N_B <-c("DKK1","NOTUM","AXIN2","LEF1","WNT3A")
+gene_set_isogpaper_Figure6P <-c("ONECUT2", "ZFHX3","NFIA","MNX1","ISL1","ISL2")
+```
+
+# Generate Plots
+
+```{r}
+DotPlot(seurat_d4,
+        features = gene_set_isogpaper_Figure6N_A,
+        group.by = "merged_simple")+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Expression in D4") + coord_flip() 
+
+DotPlot(seurat_d4,
+        features = gene_set_isogpaper_Figure6N_B,
+        group.by = "merged_simple")+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("Expression in D4") + coord_flip() 
+
+DotPlot(seurat_d20,
+        features = gene_set_isogpaper_Figure6P,
+        idents = "MN",
+        group.by = "merged_simple")+
+  scale_color_gradientn(colors = rev(RColorBrewer::brewer.pal(n =100, name = "RdBu")))+
+  theme(axis.title = element_blank()) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + ggtitle("SCO Day 20, MN Cluster 2") + coord_flip() 
+```
