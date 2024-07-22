@@ -25,8 +25,8 @@ library(readxl)
 # Load Seurat Objects 
 
 ```{r}
-seurat_d4 <- LoadH5Seurat("./seurat_objects/230304_seurat_grass_2023_d4_computed.h5Seurat")
-seurat_d20 <- LoadH5Seurat("./seurat_objects/230304_seurat_grass_2023_d20_computed.h5Seurat")
+seurat_d4 <- LoadH5Seurat("./seurat_objects/230725_seurat_grass_2023_d4_computed.h5Seurat")
+seurat_d20 <- LoadH5Seurat("./seurat_objects/230725_seurat_grass_2023_d20_computed.h5Seurat")
 ```
 
 # Reorganize order of samples
